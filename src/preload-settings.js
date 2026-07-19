@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld("settingsAPI", {
   previewAnimationOverride: (payload) => ipcRenderer.invoke("settings:preview-animation-override", payload),
   previewReaction: (payload) => ipcRenderer.invoke("settings:preview-reaction", payload),
   pickSoundFile: (payload) => ipcRenderer.invoke("settings:pick-sound-file", payload),
+  pickDirectory: () => ipcRenderer.invoke("settings:pick-directory"),
   previewSound: (payload) => ipcRenderer.invoke("settings:preview-sound", payload),
   openSoundOverridesDir: () => ipcRenderer.invoke("settings:open-sound-overrides-dir"),
   beginSizePreview: () => ipcRenderer.invoke("settings:begin-size-preview"),

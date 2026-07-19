@@ -4,6 +4,10 @@
 // Reads state.snapshot.toolPolicies; every save sends the WHOLE object
 // via window.settingsAPI.update("toolPolicies", next) — the main-side validator
 // normalizes it, and the permission chokepoint pulls fresh values per request.
+//
+// Roundtrip note: the raw picker path is stored as-is, but on app restart the
+// prefs load normalizes each path via realpath, so the displayed string may
+// differ from what was picked. Decision semantics are identical either way.
 (function initSettingsTabPermissionPolicy(root) {
   const KINDS = ["read", "edit", "exec", "network", "other"];
   const ACTIONS = ["allow", "bubble", "deny"];
@@ -176,13 +180,22 @@
     addBtn.className = "soft-btn accent";
     addBtn.textContent = t("permissionPolicyAddRule");
     addBtn.addEventListener("click", () => {
-      if (!window.settingsAPI || typeof window.settingsAPI.command !== "function") return;
-      window.settingsAPI.command("settings:pick-directory", {}).then((r) => {
-        if (!r || r.status !== "ok") return;
+      if (!window.settingsAPI || typeof window.settingsAPI.pickDirectory !== "function") return;
+      window.settingsAPI.pickDirectory().then((r) => {
+        if (!r || r.status === "cancel") return;
+        if (r.status === "error") {
+          ops.showToast(t("toastSaveFailed") + (r.message || "unknown error"), { error: true });
+          return;
+        }
+        if (r.status !== "ok") return;
         const next = snapshotPolicies();
+        // FX3: silently skip duplicate directory paths
+        if (next.directories.some((d) => d.path === r.path)) return;
         next.directories.push({ path: r.path, policies: {} });
         save(next);
-      }).catch(() => {});
+      }).catch((err) => {
+        ops.showToast(t("toastSaveFailed") + (err && err.message), { error: true });
+      });
     });
     addCtrl.appendChild(addBtn);
     addRow.appendChild(addCtrl);
