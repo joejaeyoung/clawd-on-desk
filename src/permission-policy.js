@@ -18,6 +18,7 @@
 
 const path = require("path");
 const os = require("os");
+const fs = require("fs");
 
 const TOOL_KINDS = Object.freeze(["read", "edit", "exec", "network", "other"]);
 const TOOL_KIND_SET = new Set(TOOL_KINDS);
@@ -58,6 +59,13 @@ const TOOL_KIND_MAP = Object.freeze({
   // opencode
   open_file: "read",
   run_shell_command: "exec",
+  run_command: "exec",
+  write_to_file: "edit",
+  // Copilot CLI
+  edit: "edit",
+  powershell: "exec",
+  // Hermes
+  execute_bash: "exec",
 });
 
 function canonicalToolKind(toolName) {
@@ -73,6 +81,9 @@ function cloneDefaultToolPolicies() {
 
 // "~" and "~/..." expand to the user's home; everything else resolves as-is.
 // Returns "" for non-string/empty input so callers can skip the tier.
+// After lexical resolution, attempts fs.realpathSync.native to resolve macOS
+// symlinks (e.g. /var → /private/var). On failure (path does not exist, EPERM,
+// etc.) the lexical path is kept — fail-safe: never throw, never auto-approve.
 function normalizeDirPath(value) {
   if (typeof value !== "string" || !value) return "";
   let p = value;
@@ -82,6 +93,11 @@ function normalizeDirPath(value) {
   }
   p = path.resolve(p);
   // path.resolve already strips trailing separators (except root)
+  try {
+    p = fs.realpathSync.native(p);
+  } catch {
+    // Non-existent path or permission error — keep the lexical path.
+  }
   return p;
 }
 
@@ -137,8 +153,20 @@ function decideToolPolicy(rawPolicies, request = {}) {
     // 2. directory rules — longest matching path wins; a matching rule that
     // lacks this kind falls through to global (NOT to a shorter rule), so a
     // narrow rule cleanly scopes only the kinds it names.
-    const cwd = normalizeDirPath(request.cwd);
-    if (cwd) {
+    //
+    // Fail-safe: if directory rules are configured but cwd is absent or not an
+    // absolute path, we cannot determine whether a directory deny would apply.
+    // Return bubble so the user decides — never silently skip a potential deny.
+    // When no directory rules are configured, skip this tier entirely (cwd is
+    // irrelevant and global applies as normal).
+    if (policies.directories.length > 0) {
+      // Check raw cwd first: if it's not an absolute path (or absent), we cannot
+      // determine directory membership. normalizeDirPath always resolves to
+      // absolute, so we must inspect the original value before normalization.
+      const rawCwd = request.cwd;
+      if (!rawCwd || typeof rawCwd !== "string" || !path.isAbsolute(rawCwd)) return DEFAULT_ACTION;
+      const cwd = normalizeDirPath(rawCwd);
+      if (!cwd) return DEFAULT_ACTION;
       let best = null;
       for (const rule of policies.directories) {
         if (!isPathWithin(cwd, rule.path)) continue;
@@ -162,5 +190,6 @@ module.exports = {
   canonicalToolKind,
   cloneDefaultToolPolicies,
   normalizeToolPolicies,
+  normalizeDirPath,
   decideToolPolicy,
 };

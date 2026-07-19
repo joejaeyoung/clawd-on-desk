@@ -491,6 +491,9 @@ function handlePermissionPost(req, res, options) {
           // approval, disable-agent sweep) key off it; never replace it with a
           // family-specific field (plan §3.5).
           agentId,
+          // F1: opencode plugin sends cwd in its payload so directory-tier
+          // policies can match. Source: data.cwd (opencode-family branch).
+          cwd: normalizeString(data.cwd) || "",
           // Neutral family bridge fields — one vocabulary for every member.
           familyRequestId: requestId,
           familyBridgeUrl: bridgeUrl,
@@ -1218,6 +1221,10 @@ function handlePermissionPost(req, res, options) {
         agentId: permAgentId,
         subagentId,
         subagentType,
+        // F1: CC hook payload includes cwd (built by clawd-hook.js buildStateBody);
+        // extract it so directory-tier policies can match. Source: data.cwd,
+        // server-route-permission.js (CC branch), same field other agents use.
+        cwd: normalizeString(data.cwd) || "",
       };
       const abortHandler = () => {
         if (res.writableFinished) return;

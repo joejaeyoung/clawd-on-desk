@@ -415,6 +415,12 @@ function shouldToolPolicySkipEntry(permEntry) {
   if (isPassiveNotifyEntry(permEntry)) return true;
   if (permEntry.isElicitation) return true;
   if (permEntry.toolName === "ExitPlanMode" || permEntry.toolName === "AskUserQuestion") return true;
+  // F2: malformed toolName — non-string, empty string, or the route's missing-
+  // name fallback "Unknown" must not be sent through policy. Named but
+  // unregistered tools still reach the "other" kind bucket so user-configured
+  // other-policies are respected.
+  const name = permEntry.toolName;
+  if (typeof name !== "string" || !name || name === "Unknown") return true;
   return false;
 }
 
@@ -701,15 +707,35 @@ function maybeAutoApprovePermission(permEntry) {
   return true;
 }
 
+// NOTE (F7-1): Remote-only approval entries (created by tryRemoteOnlyApproval
+// when permissionBubblesEnabled is false and a remote client is configured)
+// post their decision via a separate code path and never reach
+// showPermissionBubble, so this chokepoint is not executed for them. That
+// means tool policy is NOT applied to remote-only approvals — a Plan 2 task.
+//
+// NOTE (F7-2): auto-pilot (maybeAutoApprovePermission) is checked before this
+// function in showPermissionBubble. That ordering is intentional — the
+// auto-pilot DANGER toggle is an explicit user override that takes priority
+// over tool policies.
 function maybeApplyToolPolicy(permEntry) {
   if (shouldToolPolicySkipEntry(permEntry)) return false;
   let decision = "bubble";
   try {
     const policies = typeof ctx.getToolPolicies === "function" ? ctx.getToolPolicies() : null;
+    // F1: cwd fallback — permEntry.cwd is populated by routes that read it from
+    // the hook payload (Codex, Qwen, Copilot, Hermes, CC, opencode). If still
+    // absent, fall back to the session snapshot which may carry a cwd from a
+    // prior SessionStart event (pattern mirrors buildRemoteApprovalPayload L1184).
+    const session = ctx.sessions && typeof ctx.sessions.get === "function"
+      ? ctx.sessions.get(permEntry.sessionId)
+      : null;
+    const cwd = permEntry.cwd || (session && session.cwd) || "";
     decision = decideToolPolicy(policies, {
+      // NOTE (F7-3): agentId is present for Plan 2 (per-agent policy overrides /
+      // session-scoped policy store) — currently unused by decideToolPolicy.
       agentId: permEntry.agentId || "claude-code",
       toolName: permEntry.toolName,
-      cwd: permEntry.cwd || "",
+      cwd,
     });
   } catch (err) {
     permLog(`tool-policy error -> bubble fallback: ${err && err.message}`);

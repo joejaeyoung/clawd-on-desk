@@ -4,6 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const path = require("path");
 const os = require("os");
+const fs = require("fs");
 
 const {
   TOOL_KINDS,
@@ -11,6 +12,7 @@ const {
   canonicalToolKind,
   cloneDefaultToolPolicies,
   normalizeToolPolicies,
+  normalizeDirPath,
   decideToolPolicy,
 } = require("../src/permission-policy");
 
@@ -37,6 +39,17 @@ describe("canonicalToolKind", () => {
     assert.strictEqual(canonicalToolKind("shell_command"), "exec");
     assert.strictEqual(canonicalToolKind("open_file"), "read");
     assert.strictEqual(canonicalToolKind("run_shell_command"), "exec");
+  });
+
+  it("maps F4 additional tool names", () => {
+    // Copilot CLI
+    assert.strictEqual(canonicalToolKind("edit"), "edit");
+    assert.strictEqual(canonicalToolKind("powershell"), "exec");
+    // Hermes
+    assert.strictEqual(canonicalToolKind("execute_bash"), "exec");
+    // opencode
+    assert.strictEqual(canonicalToolKind("run_command"), "exec");
+    assert.strictEqual(canonicalToolKind("write_to_file"), "edit");
   });
 
   it("falls back to other for unknown, MCP, and non-string names", () => {
@@ -162,10 +175,22 @@ describe("decideToolPolicy", () => {
     assert.strictEqual(decideToolPolicy(p, { toolName: "Bash", cwd: "/work/proj" }), "deny");
   });
 
-  it("missing cwd skips the directory tier", () => {
+  it("missing or non-absolute cwd bubbles when directories are configured", () => {
+    // F3: directories present + no/bad cwd → bubble (cannot determine if deny applies)
     const p = policies({
       global: { read: "allow" },
       directories: [{ path: "/work", policies: { read: "deny" } }],
+    });
+    assert.strictEqual(decideToolPolicy(p, { toolName: "Read" }), "bubble");
+    assert.strictEqual(decideToolPolicy(p, { toolName: "Read", cwd: "" }), "bubble");
+    assert.strictEqual(decideToolPolicy(p, { toolName: "Read", cwd: "relative/path" }), "bubble");
+  });
+
+  it("missing cwd falls through to global when no directories are configured", () => {
+    // F3: no directories → global applies regardless of cwd
+    const p = policies({
+      global: { read: "allow" },
+      directories: [],
     });
     assert.strictEqual(decideToolPolicy(p, { toolName: "Read" }), "allow");
     assert.strictEqual(decideToolPolicy(p, { toolName: "Read", cwd: "" }), "allow");
@@ -197,5 +222,39 @@ describe("decideToolPolicy", () => {
   it("exports sanity", () => {
     assert.deepStrictEqual([...TOOL_KINDS], ["read", "edit", "exec", "network", "other"]);
     assert.deepStrictEqual([...POLICY_ACTIONS], ["allow", "bubble", "deny"]);
+  });
+});
+
+describe("normalizeDirPath – symlink canonicalization (F5)", () => {
+  it("resolves /var to /private/var on macOS (or keeps lexical if not macOS)", () => {
+    const result = normalizeDirPath("/var");
+    // On macOS /var is a symlink to /private/var; on Linux it resolves to itself.
+    // Either way the result must be an absolute path.
+    assert.ok(path.isAbsolute(result), `expected absolute path, got: ${result}`);
+    // Must not retain trailing separator (root "/" is the only exception).
+    if (result !== "/") assert.ok(!result.endsWith(path.sep));
+  });
+
+  it("symlinked cwd and real rule path match after normalization", () => {
+    const os = require("os");
+    const tmpReal = fs.mkdtempSync(path.join(os.tmpdir(), "policy-real-"));
+    const tmpLink = path.join(os.tmpdir(), `policy-link-${Date.now()}`);
+    try {
+      fs.symlinkSync(tmpReal, tmpLink);
+      // rule configured with real path; cwd arrives via symlink
+      const p = {
+        global: { read: "bubble" },
+        directories: [{ path: tmpReal, policies: { read: "allow" } }],
+      };
+      // normalizeDirPath resolves both to real path → isPathWithin matches
+      assert.strictEqual(
+        decideToolPolicy(p, { toolName: "Read", cwd: tmpLink }),
+        "allow",
+        "symlink cwd should match real rule path after realpathSync.native"
+      );
+    } finally {
+      try { fs.rmSync(tmpLink); } catch {}
+      try { fs.rmSync(tmpReal, { recursive: true }); } catch {}
+    }
   });
 });
