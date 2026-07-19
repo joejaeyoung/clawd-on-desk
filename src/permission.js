@@ -17,6 +17,7 @@ const {
 } = require("../hooks/server-config");
 const { isOpencodeFamilyEntry, getFamilyConfig } = require("../agents/opencode-family");
 const { isPassiveNotifyEntry } = require("./passive-notify-entry");
+const { decideToolPolicy } = require("./permission-policy");
 
 const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
@@ -402,6 +403,21 @@ function buildPermissionFocusEntry(perm) {
   return focusEntry;
 }
 
+// Per-tool policy chokepoint — same seam as auto-pilot above: every agent
+// branch funnels through showPermissionBubble after DND / per-agent /
+// headless gates, so applying the user's tool policy here can never approve
+// a request those gates meant to drop. Elicitation-style entries are
+// questions, not permissions — policy never consumes them.
+// MODULE-LEVEL: uses only isPassiveNotifyEntry (module-level require), so it
+// can be exported via __test for Plan 2 reuse without needing a ctx mock.
+function shouldToolPolicySkipEntry(permEntry) {
+  if (!permEntry) return true;
+  if (isPassiveNotifyEntry(permEntry)) return true;
+  if (permEntry.isElicitation) return true;
+  if (permEntry.toolName === "ExitPlanMode" || permEntry.toolName === "AskUserQuestion") return true;
+  return false;
+}
+
 module.exports = function initPermission(ctx) {
 
 // Bound to ctx.lang (a live getter), so a runtime language switch is picked up
@@ -685,9 +701,38 @@ function maybeAutoApprovePermission(permEntry) {
   return true;
 }
 
+function maybeApplyToolPolicy(permEntry) {
+  if (shouldToolPolicySkipEntry(permEntry)) return false;
+  let decision = "bubble";
+  try {
+    const policies = typeof ctx.getToolPolicies === "function" ? ctx.getToolPolicies() : null;
+    decision = decideToolPolicy(policies, {
+      agentId: permEntry.agentId || "claude-code",
+      toolName: permEntry.toolName,
+      cwd: permEntry.cwd || "",
+    });
+  } catch (err) {
+    permLog(`tool-policy error -> bubble fallback: ${err && err.message}`);
+    return false;
+  }
+  if (decision === "allow") {
+    permLog(`tool-policy allow: tool=${permEntry.toolName} session=${permEntry.sessionId} agent=${permEntry.agentId || "claude-code"}`);
+    resolvePermissionEntry(permEntry, "allow");
+    return true;
+  }
+  if (decision === "deny") {
+    permLog(`tool-policy deny: tool=${permEntry.toolName} session=${permEntry.sessionId} agent=${permEntry.agentId || "claude-code"}`);
+    resolvePermissionEntry(permEntry, "deny", "Denied by tool permission policy");
+    return true;
+  }
+  return false;
+}
+
 function showPermissionBubble(permEntry) {
   // Auto-pilot: if enabled, approve immediately and never render a bubble.
   if (maybeAutoApprovePermission(permEntry)) return;
+  // User tool policy: auto-allow / auto-deny per tool kind (global + per-dir).
+  if (maybeApplyToolPolicy(permEntry)) return;
 
   const sugCount = (permEntry.suggestions || []).length;
   const scale = getTextScale();
@@ -2510,4 +2555,5 @@ module.exports.__test = {
   sanitizeAntigravityPermissionDecision,
   buildAntigravityPermissionResponseBody,
   buildElicitationUpdatedInput,
+  shouldToolPolicySkipEntry,
 };

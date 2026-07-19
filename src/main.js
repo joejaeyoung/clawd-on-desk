@@ -1381,6 +1381,9 @@ const _permCtx = {
   // (no-decision/native fallback, opencode silent TUI fallback, or CC deny).
   isAutoApproveAllEnabled: () =>
     _settingsController.get("autoApproveAllPermissions") === true,
+  // Per-tool permission policy snapshot for permission.js's
+  // maybeApplyToolPolicy chokepoint (see permission-policy.js).
+  getToolPolicies: () => _settingsController.get("toolPolicies"),
   focusTerminalForSession: (sessionId, options = {}) => {
     focusDashboardSession(sessionId, {
       requestSource: options.requestSource || "permission-bubble",
