@@ -42,6 +42,10 @@ const {
 } = require("./bubble-policy");
 const { normalizeSessionAliases } = require("./session-alias");
 const {
+  cloneDefaultToolPolicies,
+  normalizeToolPolicies,
+} = require("./permission-policy");
+const {
   TEXT_SCALE_MIN,
   TEXT_SCALE_MAX,
   TEXT_SCALE_DEFAULT,
@@ -161,6 +165,15 @@ const SCHEMA = {
   },
   hideBubbles: { type: "boolean", default: false },
   permissionBubblesEnabled: { type: "boolean", default: true },
+  // Per-tool-kind permission policy: auto-allow / bubble / auto-deny, global +
+  // per-directory. Session-level overrides are runtime-only and never persisted.
+  // Consumed by permission.js's maybeApplyToolPolicy chokepoint. All-bubble by
+  // default — auto actions exist only when the user opts a kind in explicitly.
+  toolPolicies: {
+    type: "object",
+    defaultFactory: cloneDefaultToolPolicies,
+    normalize: normalizeToolPolicies,
+  },
   // DANGER: "auto-pilot". When true, every agent permission request is
   // auto-approved without showing a bubble or asking the user. Default false;
   // the only way to flip it on is the explicit, confirmation-gated toggle in
