@@ -278,6 +278,23 @@ function registerSettingsIpc(options = {}) {
     return { status: "ok", file: destFilename };
   });
 
+  // Directory picker for the tool-policy settings UI (Task 2). Returns
+  // { status: "ok", path } on selection, { status: "cancel" } on dismissal,
+  // or { status: "error", message } if the dialog itself throws.
+  handle("settings:pick-directory", async (event) => {
+    const parent = getDialogParent(event);
+    try {
+      const result = await dialog.showOpenDialog(parent, {
+        title: "Choose a directory",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (result.canceled || !result.filePaths.length) return { status: "cancel" };
+      return { status: "ok", path: result.filePaths[0] };
+    } catch (err) {
+      return { status: "error", message: err && err.message ? err.message : String(err) };
+    }
+  });
+
   handle("settings:preview-sound", (_event, payload) => {
     if (!payload || typeof payload !== "object") {
       return { status: "error", message: "previewSound payload must be an object" };

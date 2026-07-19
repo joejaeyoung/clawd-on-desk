@@ -133,6 +133,7 @@ const {
   validateFeishuApproval,
 } = require("./feishu-approval-settings");
 const { EVENTS: TELEGRAM_MIGRATION_EVENTS } = require("./telegram-migration-state");
+const { normalizeToolPolicies } = require("./permission-policy");
 
 // Only the Step-3 enable switch dispatches from the renderer since the
 // migration card retired: turn-on tests native, turn-off disables. The
@@ -463,6 +464,15 @@ const updateRegistry = {
   },
   tgApproval(value) {
     return validateTelegramApproval(value);
+  },
+  // Coerce instead of reject: normalizeToolPolicies always yields a valid
+  // full { global, directories } structure (fail-safe contract from
+  // permission-policy.js). The normalized value is returned so callers
+  // can read the corrected shape; the controller commits the original value
+  // via its own path, but a Task 2 update call may pass already-normalized
+  // objects, so both cases stay correct.
+  toolPolicies(value) {
+    return { status: "ok", value: normalizeToolPolicies(value) };
   },
   discordPresence(value) {
     return validateDiscordPresence(value);
