@@ -50,18 +50,30 @@
     return t("permissionPolicyKind" + kind[0].toUpperCase() + kind.slice(1));
   }
 
-  function actionSelect(current, includeInherit, onChange) {
-    const sel = document.createElement("select");
+  // Segmented button group matching the Codex permission-mode control in
+  // settings-tab-agents.js: reuses the shared .segmented / .active styles so the
+  // tab stays visually consistent with the rest of Settings (no native <select>).
+  function actionSegmented(current, includeInherit, onChange) {
+    const seg = document.createElement("div");
+    seg.className = "segmented";
+    seg.setAttribute("role", "tablist");
     const opts = includeInherit ? ["inherit"].concat(ACTIONS) : ACTIONS;
     for (const a of opts) {
-      const o = document.createElement("option");
-      o.value = a;
-      o.textContent = t("permissionPolicyAction" + a[0].toUpperCase() + a.slice(1));
-      sel.appendChild(o);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("role", "tab");
+      btn.dataset.action = a;
+      btn.textContent = t("permissionPolicyAction" + a[0].toUpperCase() + a.slice(1));
+      const isActive = current === a;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      btn.addEventListener("click", () => {
+        if (btn.classList.contains("active")) return;
+        onChange(a);
+      });
+      seg.appendChild(btn);
     }
-    sel.value = current;
-    sel.addEventListener("change", () => onChange(sel.value));
-    return sel;
+    return seg;
   }
 
   function buildGlobalRow(kind) {
@@ -79,7 +91,7 @@
     const control = document.createElement("div");
     control.className = "row-control";
     control.appendChild(
-      actionSelect(snapshotPolicies().global[kind], false, (v) => {
+      actionSegmented(snapshotPolicies().global[kind], false, (v) => {
         const next = snapshotPolicies();
         next.global[kind] = v;
         save(next);
@@ -89,46 +101,23 @@
     return row;
   }
 
+  // One directory rule renders as a header row (path + Remove) followed by one
+  // sub-row per kind (kind label + segmented), mirroring the row/row-sub layout
+  // agents.js uses. Returns an array of rows for the section to flatten.
   function buildDirItem(rule, idx) {
-    const item = document.createElement("div");
-    item.className = "row";
+    const header = document.createElement("div");
+    header.className = "row";
 
-    const text = document.createElement("div");
-    text.className = "row-text";
+    const headerText = document.createElement("div");
+    headerText.className = "row-text";
     const pathLabel = document.createElement("span");
     pathLabel.className = "row-label";
     pathLabel.textContent = rule.path;
-    text.appendChild(pathLabel);
+    headerText.appendChild(pathLabel);
+    header.appendChild(headerText);
 
-    const grid = document.createElement("div");
-    grid.className = "row-desc";
-    for (const kind of KINDS) {
-      const cell = document.createElement("span");
-      cell.style.marginRight = "8px";
-      cell.style.display = "inline-flex";
-      cell.style.alignItems = "center";
-      cell.style.gap = "4px";
-      const cellLabel = document.createElement("span");
-      cellLabel.textContent = kindLabel(kind) + ": ";
-      cell.appendChild(cellLabel);
-      cell.appendChild(
-        actionSelect(rule.policies[kind] || "inherit", true, (v) => {
-          const next = snapshotPolicies();
-          if (v === "inherit") {
-            delete next.directories[idx].policies[kind];
-          } else {
-            next.directories[idx].policies[kind] = v;
-          }
-          save(next);
-        })
-      );
-      grid.appendChild(cell);
-    }
-    text.appendChild(grid);
-    item.appendChild(text);
-
-    const control = document.createElement("div");
-    control.className = "row-control";
+    const headerControl = document.createElement("div");
+    headerControl.className = "row-control";
     const rm = document.createElement("button");
     rm.type = "button";
     rm.className = "soft-btn";
@@ -138,9 +127,39 @@
       next.directories.splice(idx, 1);
       save(next);
     });
-    control.appendChild(rm);
-    item.appendChild(control);
-    return item;
+    headerControl.appendChild(rm);
+    header.appendChild(headerControl);
+
+    const kindRows = KINDS.map((kind) => {
+      const sub = document.createElement("div");
+      sub.className = "row row-sub";
+
+      const text = document.createElement("div");
+      text.className = "row-text";
+      const label = document.createElement("span");
+      label.className = "row-label";
+      label.textContent = kindLabel(kind);
+      text.appendChild(label);
+      sub.appendChild(text);
+
+      const control = document.createElement("div");
+      control.className = "row-control";
+      control.appendChild(
+        actionSegmented(rule.policies[kind] || "inherit", true, (v) => {
+          const next = snapshotPolicies();
+          if (v === "inherit") {
+            delete next.directories[idx].policies[kind];
+          } else {
+            next.directories[idx].policies[kind] = v;
+          }
+          save(next);
+        })
+      );
+      sub.appendChild(control);
+      return sub;
+    });
+
+    return [header].concat(kindRows);
   }
 
   function render(parent) {
@@ -169,7 +188,9 @@
     dirDescText.appendChild(dirDescSpan);
     dirDesc.appendChild(dirDescText);
 
-    const dirRows = [dirDesc].concat(pol.directories.map((rule, idx) => buildDirItem(rule, idx)));
+    const dirRows = [dirDesc].concat(
+      pol.directories.reduce((rows, rule, idx) => rows.concat(buildDirItem(rule, idx)), [])
+    );
 
     const addRow = document.createElement("div");
     addRow.className = "row";
